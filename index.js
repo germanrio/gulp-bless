@@ -43,24 +43,30 @@ module.exports = function(options){
 
                     if (options.log) {
                         // print log message
-                        var msg = 'Found ' + numSelectors + ' selector' + (numSelectors === 1 ? '' : 's') + ', ';
+                        var msg = '[BLESS] Found ' + numSelectors + ' selector' + (numSelectors === 1 ? '' : 's') + ', ';
                         if (blessedFiles.length > 1) {
-                            msg += 'splitting into ' + blessedFiles.length + ' blessedFiles.';
+                            msg += 'splitting into ' + blessedFiles.length + ' blessedFiles: ';
                         } else {
-                            msg += 'not splitting.';
+                            msg += 'not splitting: ';
                         }
+                        msg += fileName;
                         gutil.log(msg);
                     }
 
                     // write processed file(s)
-                    blessedFiles.forEach(function (blessedFile) {
-                        stream.push(new File({
-                            cwd: file.cwd,
-                            base: file.base,
-                            path: path.resolve(blessedFile.filename),
-                            contents: new Buffer(blessedFile.content)
-                        }));
-                    });
+                    if (blessedFiles.length > 1) {
+                        blessedFiles.forEach(function (blessedFile) {
+                            stream.push(new File({
+                                cwd: file.cwd,
+                                base: file.base,
+                                path: path.resolve(blessedFile.filename),
+                                contents: new Buffer(blessedFile.content)
+                            }));
+                        });
+                    }
+                    else {
+                        stream.push(file);
+                    }
 
                     cb();
                 });
