@@ -10,7 +10,7 @@ var applySourcemap  = require('vinyl-sourcemaps-apply');
 var File = gutil.File;
 var PluginError = gutil.PluginError;
 
-module.exports = function(options){
+module.exports = function(options) {
     var pluginName = 'gulp-bless';
     options = options || {};
     options.imports = options.imports === undefined ? true : options.imports;
@@ -18,19 +18,19 @@ module.exports = function(options){
 
     return through.obj(function(file, enc, cb) {
         if (file.isNull()) return cb(null, file); // ignore
-        if (file.isStream()) return cb(new PluginError(pluginName,  'Streaming not supported'));
+        if (file.isStream()) return cb(new PluginError(pluginName, 'Streaming not supported'));
 
         var stream = this;
-        var shouldCreateSourcemaps = file.sourceMap;
+        var shouldCreateSourcemaps = Boolean(file.sourceMap);
 
         if (file.contents && file.contents.toString()) {
-            var fileName = path.basename(file.path);
-            var outputFilePath = path.resolve(path.dirname(file.path), fileName);
-            var contents = file.contents.toString('utf8');
+            var outputFilePath = file.path;
+            var contents = file.contents.toString(enc);
 
-
+            // do the blessing
+            var result;
             try {
-                var result = bless.chunk(contents, {
+                result = bless.chunk(contents, {
                     source: outputFilePath,
                     sourcemaps: shouldCreateSourcemaps
                 });
@@ -39,88 +39,71 @@ module.exports = function(options){
                 return cb(new PluginError(pluginName,  err));
             }
 
+            // print log message
             var numberOfSplits = result.data.length;
-
-
             if (options.log) {
-                // print log message
                 var msg = 'Found ' + result.totalSelectorCount + ' selector';
-                if (result.totalSelectorCount.length > 1) {
-                    msg += 's, splitting into ' + result.data.length + ' blessedFiles.';
+                if (numberOfSplits > 1) {
+                    msg += 's, splitting into ' + numberOfSplits + ' blessedFiles.';
                 } else {
                     msg += ', not splitting.';
                 }
                 gutil.log(msg);
             }
 
-            var addSourcemap = function(fileToAddTo, blessOutputIndex) {
-                if(!shouldCreateSourcemaps) return fileToAddTo;
-                applySourcemap(fileToAddTo, {
-                    version: 3,
-                    file: fileToAddTo.relative,
-                    sources: [file.relative],
-                    mappings: result.maps[blessOutputIndex]
-                });
-                return fileToAddTo;
-            };
-
-
             // get out early if the file isn't long enough
-            if(result.data.length === 1){
-                return cb(null, addSourcemap(new File({
-                    cwd: file.cwd,
-                    base: file.base,
-                    path: outputFilePath,
-                    contents: new Buffer(result.data[0])
-                }, 0)));
+            if(result.data.length === 1) {
+                return cb(null, file);
             }
 
+            var addSourcemap = function(fileToAddTo, blessOutputIndex) {
+                if (shouldCreateSourcemaps) {
+                    var sourcemap =  result.maps[blessOutputIndex];
+                    sourcemap.file = fileToAddTo.relative;
+                    applySourcemap(fileToAddTo, sourcemap);
+                }
+                return fileToAddTo;
+            };
 
             var outputPathStart = path.dirname(outputFilePath);
             var outputExtension = path.extname(outputFilePath);
             var outputBasename = path.basename(outputFilePath, outputExtension);
+            var lastSplitIndex = numberOfSplits - 1;
 
             var createBlessedFileName = function(index){
-                return outputBasename + '-blessed' + index + outputExtension;
+                return outputBasename + '-blessed' + (index + 1) + outputExtension;
             };
 
             var addImports = function(index, contents){
-                // only the first file should have @imports
-                if(!options.imports || index){
+                // only the last file should have @imports
+                if (!options.imports || index !== lastSplitIndex) {
                   return contents;
                 }
 
                 var imports = '';
                 var parameters = options.cacheBuster ? '?z=' + Math.round((Math.random() * 999)) : '';
-                for (var i = 1; i < numberOfSplits; i++) {
+                for (var i = 0; i < lastSplitIndex; i++) {
                     imports += "@import url('" + createBlessedFileName(i) + parameters + "');\n\n";
                 }
 
                 return imports + contents;
             };
 
-
-            var outputFiles = [];
-            for(var j = numberOfSplits - 1; j >= 0; j--) {
-                var newIndex = numberOfSplits - 1 - j;
-                var outputPath = newIndex
-                    ? path.resolve(path.join(outputPathStart, createBlessedFileName(newIndex)))
-                    : outputFilePath;
-
-                outputFiles[newIndex] = addSourcemap(new File({
-                    cwd: file.cwd,
-                    base: file.base,
-                    path: outputPath,
-                    contents: new Buffer(addImports(newIndex, result.data[j]))
-                }), j);
+            // process all files
+            var currentFile;
+            for(var j = 0; j < numberOfSplits; j++) {
+                currentFile = file.clone({contents: false});
+                if (j !== lastSplitIndex) {
+                    currentFile.path = path.join(outputPathStart, createBlessedFileName(j));
+                    // currentFile.basename = createBlessedFileName(j);
+                }
+                currentFile.contents = new Buffer(addImports(j, result.data[j]));
+                stream.push(addSourcemap(currentFile, j));
             }
 
-
-            for(var k = 0; k < numberOfSplits; k++){
-                stream.push(outputFiles[k]);
-            }
-            cb()
-        } else {
+            cb();
+        }
+        else {
             cb(null, file);
         }
     });
